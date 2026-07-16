@@ -1,9 +1,9 @@
 ---
 name: "multi-version-coordination"
-description: "Manages multi-version bug fix coordination: git commit with .gitignore hygiene, service restart with health check, and cross-version update sync via CHANGELOG. Triggers on 'git' or '重启'/'restart' keywords (first/last line = pre/post, mid-text = inline). Invoke when user mentions git management, restart, or cross-version reference."
+description: "多版本同步建议：Git 管理（提交+.gitignore 清理）、重启（健康检查+返回访问信息）、跨版本更新同步（CHANGELOG+详细文档）。触发词 'git' / '重启' / 'restart'。Invoke when user mentions git management, restart, or cross-version reference."
 ---
 
-# Multi-Version Coordination — 多版本协同管理
+# 多版本同步建议 — Multi-Version Coordination
 
 ## 1. 触发关键词与位置规则
 
@@ -239,44 +239,81 @@ v8.0.4/docs/multi-version-sync/
 
 ---
 
-## 6. 写入本版本更新状态
+## 6. 多版本同步建议开关
 
-### 6.1 触发条件
+### 6.1 开关名称
 
-| 触发方式 | 说明 | 持续性 |
+**多版本同步建议开关**（`MULTI_VERSION_SYNC`）
+
+### 6.2 开关位置（两级，OR 关系）
+
+开关可在两个位置配置，**只要其中任一位置打开，即视为打开**（OR 关系）：
+
+| 位置 | 路径 | 作用范围 |
 | --- | --- | --- |
-| **单次指令** | 用户明确说"写入多版本同步" / "记录到 CHANGELOG" | 仅本次 |
-| **开关打开** | 用户说"在 AGENTS.md 里配置开关，以后都写入" | 永久（直到关闭） |
+| **全局开关** | 项目根目录 `AGENTS.md` | 打开后，**所有子版本**全部自动记录更新 |
+| **子版本开关** | 子版本目录 `AGENTS.md`（如 `v8.0.3/AGENTS.md`） | 打开后，仅本版本自动记录更新 |
 
-### 6.2 开关配置
+### 6.3 开关判定逻辑
 
-开关写在**本版本目录的 AGENTS.md** 中（如 `v8.0.3/AGENTS.md`），不是根目录的：
-
-```markdown
-## 多版本同步开关
-
-- `MULTI_VERSION_SYNC=true` ← 开关已打开，本版本所有更新自动写入 CHANGELOG
+```
+if (全局开关 == true OR 子版本开关 == true):
+    多版本同步建议 = 开启
+else:
+    多版本同步建议 = 关闭
 ```
 
-### 6.3 开关操作
+> **全局优先**：全局开关打开后，所有子版本无论自身开关状态，都视为打开。
+
+### 6.4 全局开关配置
+
+在项目根目录 `AGENTS.md` 中：
+
+```markdown
+## 多版本同步建议开关
+
+- `MULTI_VERSION_SYNC=true` ← 全局开关已打开，所有子版本自动记录更新
+```
+
+### 6.5 子版本开关配置
+
+在子版本目录的 `AGENTS.md` 中（如 `v8.0.3/AGENTS.md`）：
+
+```markdown
+## 多版本同步建议开关
+
+- `MULTI_VERSION_SYNC=true` ← 本版本开关已打开
+```
+
+### 6.6 开关操作
 
 | 用户指令 | 操作 |
 | --- | --- |
-| "以后都写入" / "配置开关" | 在本版本 AGENTS.md 中设置 `MULTI_VERSION_SYNC=true` |
-| "关掉开关" | 修改为 `MULTI_VERSION_SYNC=false` 或删除该行 |
+| "打开多版本同步建议开关" / "全局打开" | 在根目录 `AGENTS.md` 中设置 `MULTI_VERSION_SYNC=true` |
+| "在 v8.0.3 打开开关" | 在 `v8.0.3/AGENTS.md` 中设置 `MULTI_VERSION_SYNC=true` |
+| "关掉开关" | 修改对应位置的 `MULTI_VERSION_SYNC=false` 或删除该行 |
+| "关掉全局开关" | 在根目录 `AGENTS.md` 中设置 `MULTI_VERSION_SYNC=false` 或删除 |
 
-### 6.4 开关打开后的行为
+### 6.7 开关打开后的行为
 
-当 `MULTI_VERSION_SYNC=true` 时，每次完成代码修改后自动：
+当开关生效时（全局或子版本任一打开），每次对该版本完成代码修改后自动：
 
-1. 确认版本号
+1. 确认版本号（从 `VERSION` 文件读取）
 2. 创建 `docs/multi-version-sync/details/` 下的详细文档
 3. 在 `CHANGELOG.md` 中新增记录
 4. 在 Git 提交时一并提交这些文档
 
-### 6.5 开关关闭时的行为
+### 6.8 开关关闭时的行为
 
-当 `MULTI_VERSION_SYNC=false` 或未配置时，不自动写入 CHANGELOG。仅当用户单次指令时才写入。
+当开关未打开时（全局和子版本均为 false 或未配置），不自动写入 CHANGELOG。仅当用户单次指令时才写入。
+
+### 6.9 触发条件汇总
+
+| 触发方式 | 说明 | 持续性 |
+| --- | --- | --- |
+| **单次指令** | 用户明确说"写入多版本同步" / "记录到 CHANGELOG" | 仅本次 |
+| **全局开关打开** | 根目录 `AGENTS.md` 中 `MULTI_VERSION_SYNC=true` | 所有子版本永久生效 |
+| **子版本开关打开** | 子版本 `AGENTS.md` 中 `MULTI_VERSION_SYNC=true` | 仅本版本永久生效 |
 
 ---
 
