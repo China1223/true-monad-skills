@@ -47,11 +47,17 @@ git status
 
 `__pycache__/` · `data/` · `dist/` · `build/` · `.env` · `*.log` · `logs/` · `*.tmp` · `.venv/` · `node_modules/` · `*.bak` · `*.db-shm` · `*.db-wal`
 
-### 4. 递增版本号
+### 4. 递增版本号（Git 管理）
+
+Git 管理使用 `--git` 参数：序号 +1，不加字母。
 
 ```bash
-python bump_version.py --base {大版本号}
+python deploy/maintenance/bump_version.py --git --base {大版本号}
+# 示例：python deploy/maintenance/bump_version.py --git --base 8.0.4
+# 结果：v8.0.4-0717-0007（纯数字，无字母）
 ```
+
+> **版本号规则**：Git 管理只递增数字序号。Release 部署时由 deploy-sync skill 使用 `--release` 追加字母（A/B/C...）。详见 `deploy/maintenance/bump_version.py`。
 
 ### 5. 提交并推送
 
