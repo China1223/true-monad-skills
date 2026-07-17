@@ -105,6 +105,11 @@ deploy/
 ├── event-templates/             ← 部署事件模板（发布通知、故障通报等）
 │   └── (按需创建)
 │
+├── deploy-experience/           ← 部署经验（每次部署前必读，部署后记录）
+│   ├── README.md               ← 使用说明
+│   └── {项目名}/               ← 按项目分目录
+│       └── {经验标题}.md       ← 单条经验
+│
 └── release/
     └── password.md              ← 密码汇总（不入 Git，仅本地保存）
 ```
@@ -128,6 +133,7 @@ deploy/
 | 服务器总索引 | `Server Info/SERVER_INFRASTRUCTURE.md` |
 | 部署后同步流程 | `Release Server/WEBSITE_UPDATE_GUIDE.md` |
 | 部署事件模板 | `event-templates/` |
+| 部署经验（已知问题、注意事项） | `deploy-experience/{项目名}/` |
 
 ---
 
@@ -248,6 +254,32 @@ ssh {user}@{IP} "grep 'version-badge' {项目路径}/website/deploy.html"
 
 ---
 
+## 部署经验管理
+
+### 部署前：读取经验
+
+每次部署前，**必须**读取 `deploy/deploy-experience/{项目名}/` 下的所有经验文档，了解已知问题和注意事项，避免重复踩坑。
+
+### 部署后：记录经验
+
+部署中遇到的可复现问题（非一次性 bug），写入新文档到 `deploy/deploy-experience/{项目名}/`：
+
+- 文件名：`{kebab-case标题}.md`
+- 格式：问题描述 → 根因 → 解决方案（含命令）→ 预防措施 → 适用环境 → 日期 → 版本号
+
+### 版本号验证
+
+部署后通过 `/api/version` 接口验证版本号是否正确：
+
+```bash
+curl -s http://{server-IP}:{port}/api/version
+# 预期返回：{"version":"v{版本号}"}
+```
+
+deploy.html 页面会自动调用该接口显示各实例的运行版本，与静态版本对比。
+
+---
+
 ## 检查清单
 
 - [ ] deploy.html 受影响卡片的版本号已更新
@@ -260,8 +292,10 @@ ssh {user}@{IP} "grep 'version-badge' {项目路径}/website/deploy.html"
 - [ ] gen_status_json.sh 已更新（如有端口变更）
 - [ ] LATEST.md 已更新（deploy/ 和 website/）
 - [ ] install.html 参数与 install*.sh 脚本一致（如脚本有变更）
-- [ ] 已 git commit + push
-- [ ] 所有服务器已 git pull
+- [ ] 已读取 `deploy-experience/{项目名}/` 下的部署经验
+- [ ] 已通过 `/api/version` 接口验证部署版本正确
+- [ ] 已 `git commit + push`
+- [ ] 所有服务器已 `git pull`
 - [ ] 所有服务器 deploy.html 版本号已验证一致
 
 ---
