@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""版本号递增工具（全局递增序号 + Release 字母版）—— Skills 共享版 V2。
+"""版本号递增工具（双文件模式）—— Skills 共享版 V3。
 
 本脚本同时存在于以下位置（内容完全相同）：
   .trae/skills/multi-version-coordination/bump_version.py
@@ -8,34 +8,43 @@
 加载 Skill 时，脚本自动同步到 deploy/maintenance/bump_version.py（仅高版本覆盖低版本）。
 deploy/maintenance/version_counter.txt 是项目数据，不随 Skill 迁移。
 
-版本号格式：v{major}.{minor}.{patch}-{MMDD}-{seq}{release_letter}
-示例：
-  Git 管理：v8.0.4-0717-0107        （纯数字，无字母）
-  Release ：v8.0.4-0717-0107A       （首次部署追加 A）
-  Release ：v8.0.4-0717-0107B       （第二次部署追加 B）
-  Git 管理：v8.0.4-0717-0108        （序号递增，字母清空）
+## 双文件模式（V3 核心变更）
+
+V2 使用单一 VERSION 文件，Git 和 Release 共写，容易冲突。
+V3 拆分为两个文件，互不干扰：
+
+  VERSION         — Git 代码版本号（--git 写入）
+  RELEASE_VERSION — Release 发行版本号（--release 写入）
+
+## 版本号格式
+
+  VERSION 文件：
+    v{major}.{minor}.{patch}-{Git日期MMDD}-{全局序号NNNN}
+    示例：v8.0.4-0722-0042
+
+  RELEASE_VERSION 文件：
+    v{major}.{minor}.{patch}-{Git日期MMDD}-{全局序号NNNN}-{Release日期MMDD}{字母}
+    示例：v8.0.4-0722-0042-0722A
 
 规则：
-- MMDD 为当天日期（自动计算）
-- seq 为全局递增序号（4位），从 0001 开始，永不重置
-- release_letter 为部署标记（仅 --release 时追加）
-  - 首次部署加 A，第二次 B ... Z，超过 26 次用 AA、AB ...
-  - Git 管理时清空字母（新序号不带字母）
-- 序号存储在 deploy/maintenance/version_counter.txt
+- Git 日期和序号来自 VERSION 文件（--git 递增）
+- Release 日期为当天，字母 A/B/C.../AA/AB...
+- 新 Git 提交后，RELEASE_VERSION 旧值保留（不再追加）
+- /api/version 优先返回 RELEASE_VERSION（若存在），否则返回 VERSION
 
 用法：
-  python bump_version.py --git --base 8.0.4       # Git 管理：序号+1，无字母
-  python bump_version.py --release --base 8.0.4    # Release：追加/递增字母
-  python bump_version.py --show                     # 显示当前版本号
-  python bump_version.py --script-version           # 显示脚本自身版本号
+  python bump_version.py --git --base 8.0.4        # Git：VERSION 序号+1
+  python bump_version.py --release --base 8.0.4      # Release：写 RELEASE_VERSION
+  python bump_version.py --show                       # 显示 VERSION + RELEASE_VERSION
+  python bump_version.py --script-version             # 显示脚本版本号
 """
 
 # ====================================================================
 # 脚本版本号（固定位置，供同步逻辑读取比较）
-# 格式：主.次.修订，如 "2.0.0"
+# 格式：主.次.修订，如 "3.0.0"
 # 修改脚本逻辑时递增此版本号，确保高版本自动同步到 deploy/maintenance/
 # ====================================================================
-SCRIPT_VERSION = "2.1.0"
+SCRIPT_VERSION = "3.0.0"
 
 import argparse
 import shutil
@@ -56,12 +65,15 @@ else:
     ROOT_DIR = SCRIPT_DIR.parent.parent  # deploy/maintenance/ 目录
 
 VERSION_FILE = ROOT_DIR / "VERSION"
+RELEASE_VERSION_FILE = ROOT_DIR / "RELEASE_VERSION"
 MAINTENANCE_DIR = ROOT_DIR / "deploy" / "maintenance"
 COUNTER_FILE = MAINTENANCE_DIR / "version_counter.txt"
 TARGET_SCRIPT = MAINTENANCE_DIR / "bump_version.py"
 
 # config.py 读取 v8.0.x/VERSION，需同步更新
 _VERSION_DIRS = sorted(ROOT_DIR.glob("v8.0.*/VERSION"), key=lambda p: str(p))
+# 同步 RELEASE_VERSION 到子版本目录
+_RELEASE_VERSION_DIRS = sorted(ROOT_DIR.glob("v8.0.*/RELEASE_VERSION"), key=lambda p: str(p))
 
 
 # ---- 脚本版本比较与自动同步 ----
@@ -111,11 +123,8 @@ def sync_to_maintenance() -> bool:
 
     if _version_gt(self_ver, target_ver):
         MAINTENANCE_DIR.mkdir(parents=True, exist_ok=True)
-        try:
-            shutil.copy2(self_path, TARGET_SCRIPT)
-            return True
-        except (SameFileError, OSError):
-            return False
+        shutil.copy2(self_path, TARGET_SCRIPT)
+        return True
     return False
 
 
@@ -150,20 +159,34 @@ def _letters_to_num(letters: str) -> int:
 # ---- 版本号读写 ----
 
 def read_version() -> str:
+    """读取 VERSION 文件（Git 代码版本号）。"""
     if not VERSION_FILE.exists():
         return ""
     return VERSION_FILE.read_text(encoding="utf-8").strip()
 
+def read_release_version() -> str:
+    """读取 RELEASE_VERSION 文件（发行版本号）。"""
+    if not RELEASE_VERSION_FILE.exists():
+        return ""
+    return RELEASE_VERSION_FILE.read_text(encoding="utf-8").strip()
+
+
+def read_effective_version() -> str:
+    """读取生效版本号：优先 RELEASE_VERSION，不存在则用 VERSION。"""
+    rv = read_release_version()
+    if rv:
+        return rv
+    return read_version()
+
 
 def parse_version(ver: str) -> tuple[str, str, str, str, str] | None:
-    """解析版本号。
+    """解析 Git 版本号（VERSION 文件格式）。
 
     支持：
-      v8.0.3-0706-0001       → ('8.0.3', '0706', '0001', '', 'v8.0.3-0706-0001')
-      v8.0.3-0706-0001A      → ('8.0.3', '0706', '0001', 'A', 'v8.0.3-0706-0001A')
+      v8.0.3-0706-0001  → ('8.0.3', '0706', '0001', '', 'v8.0.3-0706-0001')
 
     Returns:
-        (base, date_str, seq_str, release_letter, full_version) 或 None
+        (base, date_str, seq_str, '', full_version) 或 None
     """
     if not ver:
         return None
@@ -171,20 +194,47 @@ def parse_version(ver: str) -> tuple[str, str, str, str, str] | None:
     if not ver.startswith("v"):
         return None
     parts = ver[1:].split("-")
-    if len(parts) != 3:
+    if len(parts) < 3:
         return None
-    base, date_str, seq_and_letter = parts
+    base, date_str, seq_str = parts[0], parts[1], parts[2]
+    return base, date_str, seq_str, "", ver
 
-    # 分离数字部分和字母部分
+
+def parse_release_version(ver: str) -> tuple[str, str, str, str, str, str] | None:
+    """解析 Release 版本号（RELEASE_VERSION 文件格式）。
+
+    支持：
+      v8.0.4-0722-0042-0722A
+      → ('8.0.4', '0722', '0042', '0722', 'A', 'v8.0.4-0722-0042-0722A')
+
+    Returns:
+        (base, git_date, git_seq, release_date, release_letter, full_version) 或 None
+    """
+    if not ver:
+        return None
+    ver = ver.strip()
+    if not ver.startswith("v"):
+        return None
+    parts = ver[1:].split("-")
+    if len(parts) < 4:
+        return None
+    base = parts[0]
+    git_date = parts[1]
+    git_seq = parts[2]
+    release_part = parts[3]  # 如 0722A
+
+    # 分离日期和字母
+    release_date = ""
     release_letter = ""
-    seq_str = seq_and_letter
-    for i, ch in enumerate(seq_and_letter):
+    for i, ch in enumerate(release_part):
         if ch.isalpha():
-            release_letter = seq_and_letter[i:]
-            seq_str = seq_and_letter[:i]
+            release_date = release_part[:i]
+            release_letter = release_part[i:]
             break
+    else:
+        release_date = release_part
 
-    return base, date_str, seq_str, release_letter, ver
+    return base, git_date, git_seq, release_date, release_letter, ver
 
 
 def read_counter() -> int:
@@ -244,10 +294,19 @@ def _write_version_files(new_version: str, base: str) -> None:
             vf.write_text(new_version + "\n", encoding="utf-8")
 
 
-def bump_git(base_override: str | None = None) -> str:
-    """Git 管理递增：序号 +1，无字母。
+def _write_release_version_files(new_version: str, base: str) -> None:
+    """写入根 RELEASE_VERSION 文件和匹配的子版本 RELEASE_VERSION 文件"""
+    RELEASE_VERSION_FILE.write_text(new_version + "\n", encoding="utf-8")
+    for vf in _RELEASE_VERSION_DIRS:
+        if vf.parent.name == f"v{base}":
+            vf.write_text(new_version + "\n", encoding="utf-8")
 
-    如果当前版本有字母（如 0107B），新版本号字母清空（0108）。
+
+def bump_git(base_override: str | None = None) -> str:
+    """Git 管理递增：VERSION 序号 +1，不动 RELEASE_VERSION。
+
+    读取当前 VERSION 文件，序号+1，写入 VERSION。
+    RELEASE_VERSION 文件不受影响（保留旧值或不存在）。
     """
     _sync_counter_from_remote()  # 防御：同步远程更高的 counter
     current = read_version()
@@ -274,53 +333,55 @@ def bump_git(base_override: str | None = None) -> str:
 
 
 def bump_release(base_override: str | None = None) -> str:
-    """Release 部署递增：序号不变，追加/递增字母。
+    """Release 部署递增：读 VERSION，追加 Release 标记，写入 RELEASE_VERSION。
 
-    如果当前版本无字母（如 0107），变为 0107A。
-    如果当前版本有字母（如 0107A），变为 0107B。
-    如果当前版本的序号与 counter 不匹配（如 Git 管理后 counter 已递增），
-    则用 counter 的序号，字母从 A 开始。
+    格式：v{base}-{git_date}-{git_seq}-{release_date}{letter}
+
+    - 首次 Release：追加 -{today}A
+    - 同日再次 Release：A→B→C...
+    - 跨日 Release：新日期从 A 开始
+    - 新 Git 提交后（VERSION 已变）：从 A 开始
     """
     _sync_counter_from_remote()  # 防御：同步远程更高的 counter
-    current = read_version()
+    git_version = read_version()
     today_mmdd = datetime.now().strftime("%m%d")
 
-    if base_override:
-        base = base_override
-    elif current:
-        parsed = parse_version(current)
-        if parsed:
-            base = parsed[0]
+    if not git_version:
+        print("错误：VERSION 文件不存在，请先执行 --git")
+        sys.exit(1)
+
+    parsed = parse_version(git_version)
+    if not parsed:
+        print(f"错误：VERSION 文件格式无效：{git_version}")
+        sys.exit(1)
+
+    base = parsed[0]
+    git_date = parsed[1]
+    git_seq = parsed[2]
+
+    # 读取当前 RELEASE_VERSION，判断是否需要递增字母
+    current_release = read_release_version()
+    current_rp = parse_release_version(current_release) if current_release else None
+
+    if current_rp:
+        cur_base = current_rp[0]
+        cur_git_seq = current_rp[2]
+        cur_release_date = current_rp[3]
+        cur_letter = current_rp[4]
+
+        if cur_git_seq == git_seq and cur_release_date == today_mmdd and cur_letter:
+            # 同一 Git 版本、同一天、有字母 → 递增字母
+            letter_num = _letters_to_num(cur_letter)
+            new_letter = _num_to_letters(letter_num + 1)
         else:
-            base = "8.0.3"
+            # 不同 Git 版本或不同日期 → 从 A 开始
+            new_letter = "A"
     else:
-        base = "8.0.3"
+        # 没有 RELEASE_VERSION → 首次 Release
+        new_letter = "A"
 
-    current_seq = read_counter()
-
-    # 解析当前版本号的序号和字母
-    current_parsed = parse_version(current) if current else None
-    current_seq_str = current_parsed[2] if current_parsed else "0"
-    current_letter = current_parsed[3] if current_parsed else ""
-
-    try:
-        ver_seq = int(current_seq_str)
-    except ValueError:
-        ver_seq = 0
-
-    if ver_seq == current_seq and current_letter:
-        # 同一序号，字母递增
-        letter_num = _letters_to_num(current_letter)
-        new_letter = _num_to_letters(letter_num + 1)
-        new_version = f"v{base}-{today_mmdd}-{current_seq:04d}{new_letter}"
-    elif ver_seq == current_seq and not current_letter:
-        # 同一序号，首次加字母
-        new_version = f"v{base}-{today_mmdd}-{current_seq:04d}A"
-    else:
-        # 序号不匹配（Git 已递增或新日期），从 A 开始
-        new_version = f"v{base}-{today_mmdd}-{current_seq:04d}A"
-
-    _write_version_files(new_version, base)
+    new_version = f"v{base}-{git_date}-{git_seq}-{today_mmdd}{new_letter}"
+    _write_release_version_files(new_version, base)
     return new_version
 
 
@@ -329,31 +390,38 @@ if __name__ == "__main__":
     sync_to_maintenance()
 
     parser = argparse.ArgumentParser(
-        description="版本号递增工具（Git 序号 + Release 字母）"
+        description="版本号递增工具 V3（双文件模式：VERSION + RELEASE_VERSION）"
     )
     parser.add_argument("--git", action="store_true",
-                        help="Git 管理：序号+1，无字母")
+                        help="Git 管理：VERSION 序号+1，不动 RELEASE_VERSION")
     parser.add_argument("--release", action="store_true",
-                        help="Release 部署：追加/递增字母")
+                        help="Release 部署：读 VERSION，追加 Release 标记，写入 RELEASE_VERSION")
     parser.add_argument("--show", action="store_true",
-                        help="仅显示当前版本号")
+                        help="显示当前 VERSION 和 RELEASE_VERSION")
     parser.add_argument("--script-version", action="store_true",
                         help="显示脚本自身版本号")
     parser.add_argument("--base", type=str,
-                        help="指定大版本号（如 8.0.3），覆盖 VERSION 文件中的 base")
+                        help="指定大版本号（如 8.0.4），覆盖 VERSION 文件中的 base")
     args = parser.parse_args()
 
     if args.script_version:
         print(SCRIPT_VERSION)
     elif args.show:
-        print(read_version())
+        print(f"VERSION:         {read_version()}")
+        rv = read_release_version()
+        print(f"RELEASE_VERSION: {rv or '(未设置)'}")
+        print(f"生效版本:         {read_effective_version()}")
     elif args.git:
         new_ver = bump_git(base_override=args.base)
-        print(new_ver)
+        print(f"VERSION 已更新: {new_ver}")
+        print(f"RELEASE_VERSION: {read_release_version() or '(未设置)'}")
     elif args.release:
         new_ver = bump_release(base_override=args.base)
-        print(new_ver)
+        print(f"RELEASE_VERSION 已更新: {new_ver}")
+        print(f"VERSION:                {read_version()}")
     else:
-        # 默认行为：显示当前版本号（防止误操作）
-        print(read_version())
+        # 默认行为：显示当前版本号
+        print(f"VERSION:         {read_version()}")
+        print(f"RELEASE_VERSION: {read_release_version() or '(未设置)'}")
+        print(f"生效版本:         {read_effective_version()}")
         print("提示：请使用 --git 或 --release 指定操作类型")
