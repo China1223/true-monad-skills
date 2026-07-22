@@ -41,13 +41,31 @@ git status
 
 代码变更、配置更新、文档更新等 → `git add` + `git commit`
 
+```bash
+git add {文件1} {文件2} ...
+git commit -m "{简要描述}"
+```
+
 ### 3. 排除不该提交的
 
 检查 `.gitignore` 是否已覆盖以下类型，未覆盖的补充规则：
 
 `__pycache__/` · `data/` · `dist/` · `build/` · `.env` · `*.log` · `logs/` · `*.tmp` · `.venv/` · `node_modules/` · `*.bak` · `*.db-shm` · `*.db-wal`
 
-### 4. 递增版本号（Git 管理）
+### 4. 同步远程最新（防止版本号冲突）
+
+> **关键步骤**：多 AI 并行开发时，其他 AI 可能已 push 了更高的版本号。必须先同步远程，确保本地 `version_counter.txt` 是最新值。
+
+```bash
+git pull --rebase origin master
+```
+
+如果出现 rebase 冲突（通常是 VERSION 文件冲突）：
+1. 解决冲突，保留远程的更高版本号
+2. `git add` 冲突文件
+3. `git rebase --continue`
+
+### 5. 递增版本号（Git 管理）
 
 Git 管理使用 `--git` 参数：序号 +1，不加字母。
 
@@ -59,19 +77,21 @@ python deploy/maintenance/bump_version.py --git --base {大版本号}
 
 > **版本号规则**：Git 管理只递增数字序号。Release 部署时由 deploy-sync skill 使用 `--release` 追加字母（A/B/C...）。详见 `deploy/maintenance/bump_version.py`。
 
-### 5. 提交并推送
+### 6. 提交版本号并推送
 
 ```bash
-git add {文件1} {文件2} ...
+git add VERSION {版本目录}/VERSION
 git commit -m "v{版本号}: 描述"
 git push origin master
 ```
 
-### 6. 确认干净
+### 7. 确认干净
 
 ```bash
 git status  # 应显示 nothing to commit, working tree clean
 ```
+
+> **流程要点**：先提交代码 → pull rebase → bump 版本号 → 单独提交版本号 → push。版本号变更单独提交，避免与代码变更混在一个 commit 中，便于追溯。
 
 ---
 

@@ -35,11 +35,12 @@ deploy/maintenance/version_counter.txt 是项目数据，不随 Skill 迁移。
 # 格式：主.次.修订，如 "2.0.0"
 # 修改脚本逻辑时递增此版本号，确保高版本自动同步到 deploy/maintenance/
 # ====================================================================
-SCRIPT_VERSION = "2.0.0"
+SCRIPT_VERSION = "2.1.0"
 
 import argparse
 import shutil
 import string
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -110,8 +111,11 @@ def sync_to_maintenance() -> bool:
 
     if _version_gt(self_ver, target_ver):
         MAINTENANCE_DIR.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(self_path, TARGET_SCRIPT)
-        return True
+        try:
+            shutil.copy2(self_path, TARGET_SCRIPT)
+            return True
+        except (SameFileError, OSError):
+            return False
     return False
 
 
@@ -199,6 +203,39 @@ def write_counter(val: int) -> None:
     COUNTER_FILE.write_text(str(val) + "\n", encoding="utf-8")
 
 
+def _sync_counter_from_remote() -> None:
+    """检测远程 VERSION 文件中的序号是否高于本地 counter，若高则自动同步。
+
+    多 AI 并行开发时，其他 AI 可能已 push 了更高的版本号但本地未 pull。
+    此函数通过 git show 读取远程 master 分支的 VERSION 文件，
+    如果远程序号 > 本地 counter，则更新本地 counter 并打印警告。
+    """
+    try:
+        result = subprocess.run(
+            ["git", "show", "origin/master:VERSION"],
+            capture_output=True, text=True, timeout=10,
+            cwd=str(ROOT_DIR),
+        )
+        if result.returncode != 0:
+            return  # 远程不存在或无网络，静默跳过
+
+        remote_ver = result.stdout.strip()
+        parsed = parse_version(remote_ver)
+        if not parsed:
+            return
+
+        remote_seq = int(parsed[2])
+        local_seq = read_counter()
+
+        if remote_seq > local_seq:
+            write_counter(remote_seq)
+            print(f"⚠️  检测到远程版本号更高：远程 seq={remote_seq} > 本地 seq={local_seq}")
+            print(f"    已自动同步 version_counter.txt 为 {remote_seq}")
+            print(f"    远程版本：{remote_ver}")
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass  # git 不可用或超时，静默跳过
+
+
 def _write_version_files(new_version: str, base: str) -> None:
     """写入根 VERSION 文件和匹配的子版本 VERSION 文件"""
     VERSION_FILE.write_text(new_version + "\n", encoding="utf-8")
@@ -212,6 +249,7 @@ def bump_git(base_override: str | None = None) -> str:
 
     如果当前版本有字母（如 0107B），新版本号字母清空（0108）。
     """
+    _sync_counter_from_remote()  # 防御：同步远程更高的 counter
     current = read_version()
     today_mmdd = datetime.now().strftime("%m%d")
 
@@ -243,6 +281,7 @@ def bump_release(base_override: str | None = None) -> str:
     如果当前版本的序号与 counter 不匹配（如 Git 管理后 counter 已递增），
     则用 counter 的序号，字母从 A 开始。
     """
+    _sync_counter_from_remote()  # 防御：同步远程更高的 counter
     current = read_version()
     today_mmdd = datetime.now().strftime("%m%d")
 
